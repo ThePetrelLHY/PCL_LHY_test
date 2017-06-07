@@ -891,7 +891,7 @@ struct KinFuLSApp
     
   }
 
-  void source_cb1(const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper)  
+  void source_cb1_device(const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper)  
   {        
     {
       boost::mutex::scoped_try_lock lock(data_ready_mutex_);
@@ -909,7 +909,7 @@ struct KinFuLSApp
     data_ready_cond_.notify_one();
   }
 
-  void source_cb2(const boost::shared_ptr<openni_wrapper::Image>& image_wrapper, const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper, float)
+  void source_cb2_device(const boost::shared_ptr<openni_wrapper::Image>& image_wrapper, const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper, float)
   {
     {
       boost::mutex::scoped_try_lock lock(data_ready_mutex_);
@@ -938,7 +938,51 @@ struct KinFuLSApp
     }
     data_ready_cond_.notify_one();
   }
+  //**
+  void source_cb1_oni(const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper)  
+  {        
+    {
+      boost::mutex::scoped_lock lock(data_ready_mutex_);
+      if (exit_)
+          return;
+      
+      depth_.cols = depth_wrapper->getWidth();
+      depth_.rows = depth_wrapper->getHeight();
+      depth_.step = depth_.cols * depth_.elemSize();
 
+      source_depth_data_.resize(depth_.cols * depth_.rows);
+      depth_wrapper->fillDepthImageRaw(depth_.cols, depth_.rows, &source_depth_data_[0]);
+      depth_.data = &source_depth_data_[0];     
+    }
+    data_ready_cond_.notify_one();
+  }
+  //**
+  void source_cb2_oni(const boost::shared_ptr<openni_wrapper::Image>& image_wrapper, const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper, float)
+  {
+    {
+      boost::mutex::scoped_lock lock(data_ready_mutex_);
+      if (exit_)
+          return;
+                  
+      depth_.cols = depth_wrapper->getWidth();
+      depth_.rows = depth_wrapper->getHeight();
+      depth_.step = depth_.cols * depth_.elemSize();
+
+      source_depth_data_.resize(depth_.cols * depth_.rows);
+      depth_wrapper->fillDepthImageRaw(depth_.cols, depth_.rows, &source_depth_data_[0]);
+      depth_.data = &source_depth_data_[0];      
+      
+      rgb24_.cols = image_wrapper->getWidth();
+      rgb24_.rows = image_wrapper->getHeight();
+      rgb24_.step = rgb24_.cols * rgb24_.elemSize(); 
+
+      source_image_data_.resize(rgb24_.cols * rgb24_.rows);
+      image_wrapper->fillRGB(rgb24_.cols, rgb24_.rows, (unsigned char*)&source_image_data_[0]);
+      rgb24_.data = &source_image_data_[0];           
+    }
+    data_ready_cond_.notify_one();
+  }
+  
   void source_cb3(const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr & DC3)
   {
     {                             
@@ -985,8 +1029,17 @@ struct KinFuLSApp
     typedef boost::shared_ptr<DepthImage> DepthImagePtr;
     typedef boost::shared_ptr<Image>      ImagePtr;
 
-    boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1 = boost::bind (&KinFuLSApp::source_cb2, this, _1, _2, _3);
-    boost::function<void (const DepthImagePtr&)> func2 = boost::bind (&KinFuLSApp::source_cb1, this, _1);
+	//**
+    boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1_dev = boost::bind (&KinFuLSApp::source_cb2_device, this, _1, _2, _3);
+    boost::function<void (const DepthImagePtr&)> func2_dev = boost::bind (&KinFuLSApp::source_cb1_device, this, _1);
+	//**
+	boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1_oni = boost::bind (&KinFuLSApp::source_cb2_oni, this, _1, _2, _3);
+    boost::function<void (const DepthImagePtr&)> func2_oni = boost::bind (&KinFuLSApp::source_cb1_oni, this, _1);
+	//**
+	bool is_oni = dynamic_cast<pcl::ONIGrabber*>(&capture_) != 0;
+	boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1 = is_oni ? func1_oni : func1_dev;
+    boost::function<void (const DepthImagePtr&)> func2 = is_oni ? func2_oni : func2_dev;
+
     boost::function<void (const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr&) > func3 = boost::bind (&KinFuLSApp::source_cb3, this, _1);
 
     bool need_colors = integrate_colors_ || registration_ || enable_texture_extraction_;
@@ -1344,6 +1397,7 @@ main (int argc, char* argv[])
 
   if (pc::find_switch (argc, argv, "--extract-textures") || pc::find_switch (argc, argv, "-et"))      
     app.enable_texture_extraction_ = true;
+
 
   // executing
   if (triggered_capture) 
